@@ -192,7 +192,7 @@ resource "aws_instance" "worker" {
 
   tags = {
     Name    = "K8s-Worker-${count.index + 1}"
-    Role    = "worker"
+    Role    = "workers"
     Cluster = "kubecoin"
   }
 }
