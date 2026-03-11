@@ -1,0 +1,71 @@
+events {
+    worker_connections 1024;
+}
+
+http {
+    include       /etc/nginx/mime.types;
+    default_type  application/octet-stream;
+
+    # Logging
+    log_format main '$remote_addr - $remote_user [$time_local] "$request" '
+                    '$status $body_bytes_sent "$http_referer" '
+                    '"$http_user_agent" "$http_x_forwarded_for"';
+    access_log /var/log/nginx/access.log main;
+    error_log /var/log/nginx/error.log warn;
+
+    # Performance
+    sendfile        on;
+    keepalive_timeout  65;
+    gzip  on;
+    gzip_types text/plain text/css application/json application/javascript text/xml application/xml;
+
+    server {
+        listen 8080;
+        server_name localhost;
+
+        # Security Headers
+        add_header X-Frame-Options "SAMEORIGIN";
+        add_header X-Content-Type-Options "nosniff";
+        add_header X-XSS-Protection "1; mode=block";
+        add_header Referrer-Policy "strict-origin-when-cross-origin";
+
+        # Serve static files
+        root /usr/share/nginx/html;
+        index index.html;
+
+        # React Router support - serve index.html for all non-file routes
+        location / {
+            try_files $uri $uri/ /index.html;
+        }
+
+        # Reverse Proxy for API calls
+        location /api/ {
+            # DNS resolver: auto-discovered from /etc/resolv.conf at container startup
+            # Works in Docker, Kubernetes, or any environment
+            resolver ${DNS_RESOLVER} valid=10s ipv6=off;
+            resolver_timeout 5s;
+            
+            # Backend URL is substituted at container startup via envsubst
+            set $upstream ${BACKEND_URL};
+            proxy_pass $upstream;
+            
+            # Forward headers for proper request handling
+            proxy_set_header Host $host;
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $scheme;
+
+            # Timeout settings for long-running requests (mining)
+            proxy_connect_timeout 60s;
+            proxy_send_timeout 60s;
+            proxy_read_timeout 60s;
+        }
+
+        # Health check endpoint
+        location /health {
+            access_log off;
+            return 200 "healthy\n";
+            add_header Content-Type text/plain;
+        }
+    }
+}
