@@ -46,39 +46,33 @@ pipeline {
         }
 
         stage('Ansible - Setup K8s Cluster') {
-            steps {
-                sh '''
-                    MASTER_IP=$(cat /tmp/master_ip.txt)
-                    WORKER1=$(sed -n '1p' /tmp/worker_ips.txt)
-                    WORKER2=$(sed -n '2p' /tmp/worker_ips.txt)
+    steps {
+        withCredentials([
+            string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
+            string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
+        ]) {
+            sh '''
+                export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+                export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+                export AWS_DEFAULT_REGION=ap-south-1
 
-                    # Generate dynamic inventory
-                    cat > /tmp/inventory.ini << EOF
-[master]
-${MASTER_IP} ansible_user=ubuntu ansible_ssh_private_key_file=${SSH_KEY} ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+                echo "Waiting 30s for EC2s to boot..."
+                sleep 30
 
-[workers]
-${WORKER1} ansible_user=ubuntu ansible_ssh_private_key_file=${SSH_KEY} ansible_ssh_common_args='-o StrictHostKeyChecking=no'
-${WORKER2} ansible_user=ubuntu ansible_ssh_private_key_file=${SSH_KEY} ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+                cd ansible
 
-[k8s:children]
-master
-workers
-EOF
+                # Test dynamic inventory
+                ansible-inventory -i inventory.aws_ec2.yml --list
 
-                    echo "Generated inventory:"
-                    cat /tmp/inventory.ini
-
-                    # Wait for EC2s to be ready
-                    echo "Waiting 30s for EC2s to boot..."
-                    sleep 30
-
-                    # Run ansible
-                    ansible-playbook -i /tmp/inventory.ini ansible/site.yml
-                '''
-            }
+                # Run playbook with dynamic inventory
+                ansible-playbook -i inventory.aws_ec2.yml site.yml \
+                    --private-key /var/lib/jenkins/.ssh/id_rsa \
+                    -e "ansible_user=ubuntu" \
+                    -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'"
+            '''
         }
-
+    }
+}
         stage('Copy Kubeconfig') {
             steps {
                 sh '''
