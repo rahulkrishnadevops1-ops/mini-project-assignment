@@ -96,14 +96,6 @@ resource "aws_security_group" "k8s" {
   description = "Kubernetes nodes communication"
   vpc_id      = aws_vpc.main.id
 
-  ingress {
-    description     = "SSH from Jenkins"
-    from_port       = 22
-    to_port         = 22
-    protocol        = "tcp"
-    security_groups = [aws_security_group.jenkins.id]
-  }
-
 ingress {
   description = "SSH from anywhere (key-protected)"
   from_port   = 22
@@ -111,14 +103,6 @@ ingress {
   protocol    = "tcp"
   cidr_blocks = ["0.0.0.0/0"]
 }
-
-  ingress {
-    description = "SSH from local machine"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["${var.my_ip}/32"]
-  }
 
   ingress {
     description = "All traffic within cluster"
