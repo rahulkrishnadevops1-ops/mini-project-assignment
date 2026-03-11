@@ -1,0 +1,25 @@
+---
+- name: Bootstrap all K8s nodes
+  hosts: k8s
+  become: true
+  gather_facts: true
+  vars_files:
+    - group_vars/all.yml
+  roles:
+    - bootstrap
+
+- name: Initialize control plane
+  hosts: master
+  become: true
+  gather_facts: true
+  vars_files:
+    - group_vars/all.yml
+  roles:
+    - control_plane
+
+- name: Join workers
+  hosts: workers
+  become: true
+  gather_facts: true
+  roles:
+    - workers
