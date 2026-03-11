@@ -1,0 +1,14 @@
+plugin: amazon.aws.aws_ec2
+regions:
+  - ap-south-1
+filters:
+  instance-state-name: running
+  tag:Project: kubecoin
+keyed_groups:
+  - key: tags.Role
+    prefix: ''
+    separator: ''
+compose:
+  ansible_host: public_ip_address
+hostvar_sources:
+  - tag
