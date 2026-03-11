@@ -1,0 +1,80 @@
+namespace:
+  create: true
+  # Leave empty to use the Helm release namespace (-n flag)
+  name: ""
+backend:
+  deploymentName: backend
+  replicas: 2
+  containerPort: 5000
+  serviceName: backend-svc
+  service:
+    type: ClusterIP
+    port: 5000
+    targetPort: 5000
+  image:
+    repository: artisantek/kubecoin-backend
+    tag: "1.0"
+    pullPolicy: IfNotPresent
+  initContainer:
+    image: postgres:18.1-alpine
+  db:
+    name: kubecoin
+    user: postgres
+    password: password
+
+database:
+  masterStatefulSetName: postgres-master
+  replicaStatefulSetName: postgres-replica
+  replicas: 2
+  headlessServiceName: postgres-headless
+  containerPort: 5432
+  serviceName: database-primary-svc
+  replicaServiceName: database-replica-svc
+  service:
+    type: ClusterIP
+    port: 5432
+    targetPort: 5432
+  image:
+    repository: postgres
+    tag: 18.1-alpine
+    pullPolicy: IfNotPresent
+  initConfigMapName: postgres-init-sql
+  auth:
+    user: postgres
+    password: password
+    database: kubecoin
+  replication:
+    user: replicator
+    password: replicator_password
+  initSql: |
+    CREATE TABLE IF NOT EXISTS wallets (
+      id VARCHAR(255) PRIMARY KEY,
+      balance DECIMAL(15,2) DEFAULT 1000.00,
+      coins DECIMAL(15,2) DEFAULT 0.00,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_wallets_id ON wallets(id);
+  persistence:
+    enabled: true
+    storageClass: local-path
+    accessModes:
+      - ReadWriteOnce
+    size: 8Gi
+
+frontend:
+  deploymentName: frontend
+  replicas: 2
+  containerPort: 8080
+  serviceName: frontend-svc
+  service:
+    type: NodePort
+    port: 8080
+    targetPort: 8080
+    nodePort: 30143
+  image:
+    repository: artisantek/kubecoin-frontend
+    tag: "1.0"
+    pullPolicy: IfNotPresent
+  backendUrl: ""

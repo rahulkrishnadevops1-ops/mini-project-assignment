@@ -1,0 +1,7 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.database.initConfigMapName }}
+data:
+  init.sql: |
+{{ .Values.database.initSql | indent 4 }}

@@ -1,0 +1,25 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.frontend.deploymentName }}
+  labels:
+    module: frontend
+spec:
+  replicas: {{ .Values.frontend.replicas }}
+  selector:
+    matchLabels:
+      module: frontend
+  template:
+    metadata:
+      labels:
+        module: frontend
+    spec:
+      containers:
+        - name: frontend
+          image: "{{ .Values.frontend.image.repository }}:{{ .Values.frontend.image.tag }}"
+          imagePullPolicy: {{ .Values.frontend.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.frontend.containerPort }}
+          env:
+            - name: BACKEND_URL
+              value: {{ default (printf "http://%s.%s.svc.cluster.local:%v" .Values.backend.serviceName .Release.Namespace .Values.backend.service.port) .Values.frontend.backendUrl | quote }}

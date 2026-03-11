@@ -1,0 +1,156 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Values.database.masterStatefulSetName }}
+  labels:
+    module: db-postgres
+    role: primary
+spec:
+  serviceName: {{ .Values.database.headlessServiceName }}
+  replicas: 1
+  podManagementPolicy: OrderedReady
+  selector:
+    matchLabels:
+      module: db-postgres
+      role: primary
+  template:
+    metadata:
+      labels:
+        module: db-postgres
+        role: primary
+    spec:
+      containers:
+        - name: postgres
+          image: "{{ .Values.database.image.repository }}:{{ .Values.database.image.tag }}"
+          imagePullPolicy: {{ .Values.database.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.database.containerPort }}
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.database.auth.user | quote }}
+            - name: POSTGRES_PASSWORD
+              value: {{ .Values.database.auth.password | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.database.auth.database | quote }}
+            - name: REPLICATION_USER
+              value: {{ .Values.database.replication.user | quote }}
+            - name: REPLICATION_PASSWORD
+              value: {{ .Values.database.replication.password | quote }}
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+          volumeMounts:
+            - name: init-sql
+              mountPath: /docker-entrypoint-initdb.d/00-init.sql
+              subPath: init.sql
+            - name: repl-script
+              mountPath: /docker-entrypoint-initdb.d/01-configure-replication.sh
+              subPath: configure-replication.sh
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+      volumes:
+        - name: init-sql
+          configMap:
+            name: {{ .Values.database.initConfigMapName }}
+            defaultMode: 493
+        - name: repl-script
+          configMap:
+            name: postgres-replication-config
+            defaultMode: 493
+{{- if not .Values.database.persistence.enabled }}
+        - name: pgdata
+          emptyDir: {}
+{{- end }}
+{{- if .Values.database.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: pgdata
+      spec:
+        accessModes:
+{{ toYaml .Values.database.persistence.accessModes | indent 10 }}
+{{- if .Values.database.persistence.storageClass }}
+        storageClassName: {{ .Values.database.persistence.storageClass | quote }}
+{{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.database.persistence.size | quote }}
+{{- end }}
+{{- if gt (int .Values.database.replicas) 1 }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Values.database.replicaStatefulSetName }}
+  labels:
+    module: db-postgres
+    role: replica
+spec:
+  serviceName: {{ .Values.database.headlessServiceName }}
+  replicas: {{ sub (int .Values.database.replicas) 1 }}
+  podManagementPolicy: OrderedReady
+  selector:
+    matchLabels:
+      module: db-postgres
+      role: replica
+  template:
+    metadata:
+      labels:
+        module: db-postgres
+        role: replica
+    spec:
+      containers:
+        - name: postgres
+          image: "{{ .Values.database.image.repository }}:{{ .Values.database.image.tag }}"
+          imagePullPolicy: {{ .Values.database.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.database.containerPort }}
+          env:
+            - name: POSTGRES_USER
+              value: {{ .Values.database.auth.user | quote }}
+            - name: POSTGRES_PASSWORD
+              value: {{ .Values.database.auth.password | quote }}
+            - name: POSTGRES_DB
+              value: {{ .Values.database.auth.database | quote }}
+            - name: PGDATA
+              value: /var/lib/postgresql/data/pgdata
+            - name: PGPASSWORD
+              value: {{ .Values.database.replication.password | quote }}
+          command:
+            - /bin/bash
+            - -ec
+            - |
+              mkdir -p "$PGDATA"
+              if [ ! -s "$PGDATA/PG_VERSION" ]; then
+                rm -rf "${PGDATA:?}"/*
+                until pg_isready -h {{ .Values.database.serviceName }} -p {{ .Values.database.service.port }} -U {{ .Values.database.replication.user }}; do
+                  echo "Waiting for primary PostgreSQL..."
+                  sleep 2
+                done
+                until pg_basebackup -h {{ .Values.database.serviceName }} -p {{ .Values.database.service.port }} -U {{ .Values.database.replication.user }} -D "$PGDATA" -Fp -Xs -P -R; do
+                  echo "Primary not ready for base backup, retrying..."
+                  sleep 2
+                done
+              fi
+              exec docker-entrypoint.sh postgres
+          volumeMounts:
+            - name: pgdata
+              mountPath: /var/lib/postgresql/data
+{{- if not .Values.database.persistence.enabled }}
+      volumes:
+        - name: pgdata
+          emptyDir: {}
+{{- end }}
+{{- if .Values.database.persistence.enabled }}
+  volumeClaimTemplates:
+    - metadata:
+        name: pgdata
+      spec:
+        accessModes:
+{{ toYaml .Values.database.persistence.accessModes | indent 10 }}
+{{- if .Values.database.persistence.storageClass }}
+        storageClassName: {{ .Values.database.persistence.storageClass | quote }}
+{{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.database.persistence.size | quote }}
+{{- end }}
+{{- end }}

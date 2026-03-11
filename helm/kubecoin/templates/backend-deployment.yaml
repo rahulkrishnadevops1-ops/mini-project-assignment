@@ -1,0 +1,46 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.backend.deploymentName }}
+  labels:
+    module: backend
+spec:
+  replicas: {{ .Values.backend.replicas }}
+  selector:
+    matchLabels:
+      module: backend
+  template:
+    metadata:
+      labels:
+        module: backend
+    spec:
+      initContainers:
+        - name: wait-for-db
+          image: {{ .Values.backend.initContainer.image | quote }}
+          env:
+            - name: PGPASSWORD
+              value: {{ .Values.backend.db.password | quote }}
+          command:
+            - sh
+            - -c
+            - |
+              echo "Waiting for database..."
+              until pg_isready -h {{ .Values.database.serviceName }} -p {{ .Values.database.service.port }} -U {{ .Values.backend.db.user }}; do
+                sleep 2
+              done
+              echo "Database is ready."
+      containers:
+        - name: backend
+          image: "{{ .Values.backend.image.repository }}:{{ .Values.backend.image.tag }}"
+          imagePullPolicy: {{ .Values.backend.image.pullPolicy }}
+          ports:
+            - containerPort: {{ .Values.backend.containerPort }}
+          env:
+            - name: DB_HOST
+              value: {{ .Values.database.serviceName | quote }}
+            - name: DB_NAME
+              value: {{ .Values.backend.db.name | quote }}
+            - name: DB_USER
+              value: {{ .Values.backend.db.user | quote }}
+            - name: DB_PASSWORD
+              value: {{ .Values.backend.db.password | quote }}
