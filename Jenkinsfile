@@ -34,7 +34,6 @@ pipeline {
                         terraform init
                         terraform apply -auto-approve
 
-                        # Save IPs for next stages
                         terraform output -raw master_public_ip > /tmp/master_ip.txt
                         terraform output -json worker_public_ips | tr -d '[]"' | tr ',' '\n' | tr -d ' ' > /tmp/worker_ips.txt
 
@@ -46,54 +45,59 @@ pipeline {
         }
 
         stage('Ansible - Setup K8s Cluster') {
-    steps {
-        withCredentials([
-            string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
-            string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
-        ]) {
-            sh '''
-                export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-                export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
-                export AWS_DEFAULT_REGION=ap-south-1
+            steps {
+                sh '''
+                    MASTER_IP=$(cat /tmp/master_ip.txt)
+                    WORKER1=$(sed -n '1p' /tmp/worker_ips.txt)
+                    WORKER2=$(sed -n '2p' /tmp/worker_ips.txt)
 
-                echo "Waiting 30s for EC2s to boot..."
-                sleep 30
+                    cat > /tmp/inventory.ini << EOF
+[master]
+${MASTER_IP} ansible_user=ubuntu ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
 
-                cd ansible
+[workers]
+${WORKER1} ansible_user=ubuntu ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+${WORKER2} ansible_user=ubuntu ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
 
-                # Test dynamic inventory
-                ansible-inventory -i inventory.aws_ec2.yml --list
+[k8s:children]
+master
+workers
+EOF
 
-                # Run playbook with dynamic inventory
-                ansible-playbook -i inventory.aws_ec2.yml site.yml \
-                    --private-key /var/lib/jenkins/.ssh/id_rsa \
-                    -e "ansible_user=ubuntu" \
-                    -e "ansible_ssh_common_args='-o StrictHostKeyChecking=no'"
-            '''
+                    echo "Waiting 60s for EC2s to initialize..."
+                    sleep 60
+
+                    echo "Waiting for SSH on master..."
+                    until ssh -i /var/lib/jenkins/.ssh/id_rsa \
+                        -o StrictHostKeyChecking=no \
+                        -o ConnectTimeout=5 \
+                        ubuntu@${MASTER_IP} echo "SSH ready" 2>/dev/null; do
+                        echo "Not ready yet, retrying in 10s..."
+                        sleep 10
+                    done
+
+                    echo "SSH is up! Running Ansible..."
+                    ansible-playbook -i /tmp/inventory.ini ansible/site.yml
+                '''
+            }
         }
-    }
-}
+
         stage('Copy Kubeconfig') {
             steps {
                 sh '''
                     MASTER_IP=$(cat /tmp/master_ip.txt)
 
-                    # Wait for K8s to be fully ready
                     sleep 20
 
-                    # Get kubeconfig from master
                     ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ubuntu@${MASTER_IP} \
                         "cat ~/.kube/config" > /tmp/kubeconfig
 
-                    # Fix server IP
                     sed -i "s|https://127.0.0.1:6443|https://${MASTER_IP}:6443|g" /tmp/kubeconfig
                     sed -i "s|https://localhost:6443|https://${MASTER_IP}:6443|g" /tmp/kubeconfig
 
-                    # Place for jenkins
                     mkdir -p /var/lib/jenkins/.kube
                     cp /tmp/kubeconfig /var/lib/jenkins/.kube/config
 
-                    # Verify
                     kubectl --kubeconfig=/tmp/kubeconfig get nodes
                 '''
             }
@@ -141,11 +145,9 @@ pipeline {
                 sh """
                     MASTER_IP=\$(cat /tmp/master_ip.txt)
 
-                    # Copy helm chart to master
                     scp -i ${SSH_KEY} -o StrictHostKeyChecking=no \
                         -r helm/kubecoin ubuntu@\${MASTER_IP}:/tmp/kubecoin-helm
 
-                    # Deploy
                     ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ubuntu@\${MASTER_IP} '
                         kubectl create namespace frontend --dry-run=client -o yaml | kubectl apply -f -
                         kubectl create namespace backend  --dry-run=client -o yaml | kubectl apply -f -
@@ -184,7 +186,21 @@ pipeline {
             echo '✅ KubeCoin deployed successfully!'
         }
         failure {
-            echo '❌ Pipeline failed! Check logs above.'
+            echo '❌ Pipeline failed! Running terraform destroy to clean up...'
+            withCredentials([
+                string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
+                string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
+            ]) {
+                sh '''
+                    export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+                    export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+                    export AWS_DEFAULT_REGION=ap-south-1
+
+                    cd terraform
+                    terraform destroy -auto-approve || true
+                    echo "🧹 Infrastructure destroyed!"
+                '''
+            }
         }
         always {
             sh 'docker logout || true'
