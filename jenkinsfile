@@ -1,0 +1,70 @@
+pipeline {
+agent any
+
+```
+environment {
+    TF_IN_AUTOMATION = "true"
+}
+
+stages {
+
+    stage('Clone Repository') {
+        steps {
+            git branch: 'main',
+            url: 'https://github.com/rahulkrishnadevops1-ops/mini-project-assignment.git'
+        }
+    }
+
+    stage('Verify Tools') {
+        steps {
+            sh 'terraform -version'
+            sh 'ansible --version'
+        }
+    }
+
+    stage('Terraform Init') {
+        steps {
+            dir('terraform') {
+                sh 'terraform init'
+            }
+        }
+    }
+
+    stage('Terraform Plan') {
+        steps {
+            dir('terraform') {
+                sh 'terraform plan'
+            }
+        }
+    }
+
+    stage('Terraform Apply') {
+        steps {
+            dir('terraform') {
+                sh 'terraform apply -auto-approve'
+            }
+        }
+    }
+
+    stage('Run Ansible') {
+        steps {
+            dir('kubecoin-ansible') {
+                sh 'ansible-playbook -i inventory.ini site.yml'
+            }
+        }
+    }
+
+}
+
+post {
+    success {
+        echo 'Infrastructure and Kubernetes setup completed successfully.'
+    }
+
+    failure {
+        echo 'Pipeline failed. Check logs.'
+    }
+}
+```
+
+}
