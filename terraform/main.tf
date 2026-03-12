@@ -138,3 +138,35 @@ resource "aws_instance" "worker" {
     Cluster = "kubecoin"
   }
 }
+locals {
+  bootstrap_script = <<-EOF
+    #!/bin/bash
+    set -e
+    swapoff -a
+    sed -i 's/^([^#].*\s+swap\s+.*)$/# \1/' /etc/fstab
+    modprobe overlay && modprobe br_netfilter
+    cat >> /etc/modules-load.d/k8s.conf << EOL
+overlay
+br_netfilter
+EOL
+    cat >> /etc/sysctl.d/k8s.conf << EOL
+net.bridge.bridge-nf-call-iptables=1
+net.bridge.bridge-nf-call-ip6tables=1
+net.ipv4.ip_forward=1
+EOL
+    sysctl --system
+    apt-get update -y
+    apt-get install -y apt-transport-https ca-certificates curl gnupg containerd
+    mkdir -p /etc/containerd /etc/apt/keyrings
+    containerd config default > /etc/containerd/config.toml
+    sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+    systemctl restart containerd && systemctl enable containerd
+    curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+    echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /' > /etc/apt/sources.list.d/kubernetes.list
+    apt-get update -y
+    apt-get install -y kubelet kubeadm kubectl
+    apt-mark hold kubelet kubeadm kubectl
+    systemctl enable kubelet
+    touch /tmp/bootstrap-done
+  EOF
+}
