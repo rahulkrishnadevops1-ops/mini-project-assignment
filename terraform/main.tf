@@ -1,11 +1,13 @@
 # ── AMI ──────────────────────────────────────────────
 data "aws_ami" "ubuntu" {
   most_recent = true
-  owners      = ["099720109477"]
+  owners      = ["099720109477"] # Canonical
+
   filter {
     name   = "name"
     values = ["ubuntu/images/hvm-ssd/ubuntu-jammy-22.04-amd64-server-*"]
   }
+
   filter {
     name   = "virtualization-type"
     values = ["hvm"]
@@ -14,39 +16,59 @@ data "aws_ami" "ubuntu" {
 
 # ── Bootstrap Script ──────────────────────────────────
 locals {
-  bootstrap_script = <<-EOF
-    #!/bin/bash
-    set -e
-    swapoff -a
-    mkdir -p /etc/containerd /etc/apt/keyrings /etc/modules-load.d /etc/sysctl.d
-    cat > /etc/modules-load.d/k8s.conf << EOL
+  bootstrap_script = base64encode(<<-EOF
+#!/bin/bash
+set -e
+exec > /var/log/bootstrap.log 2>&1
+
+echo "=== Bootstrap started ==="
+
+swapoff -a
+sed -i 's/^\([^#].*\s\+swap\s\+.*\)$/# \1/' /etc/fstab
+
+mkdir -p /etc/containerd /etc/apt/keyrings /etc/modules-load.d /etc/sysctl.d
+
+cat > /etc/modules-load.d/k8s.conf << EOL
 overlay
 br_netfilter
 EOL
-    modprobe overlay
-    modprobe br_netfilter
-    cat > /etc/sysctl.d/k8s.conf << EOL
+
+modprobe overlay
+modprobe br_netfilter
+
+cat > /etc/sysctl.d/k8s.conf << EOL
 net.bridge.bridge-nf-call-iptables=1
 net.bridge.bridge-nf-call-ip6tables=1
 net.ipv4.ip_forward=1
 EOL
-    sysctl --system
-    apt-get update -y
-    apt-get install -y apt-transport-https ca-certificates curl gnupg containerd
-    containerd config default > /etc/containerd/config.toml
-    sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
-    systemctl restart containerd
-    systemctl enable containerd
-    curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | \
-      gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
-    echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /' \
-      > /etc/apt/sources.list.d/kubernetes.list
-    apt-get update -y
-    apt-get install -y kubelet kubeadm kubectl
-    apt-mark hold kubelet kubeadm kubectl
-    systemctl enable kubelet
-    touch /tmp/bootstrap-done
-  EOF
+
+sysctl --system
+
+echo "=== Installing containerd ==="
+apt-get update -y
+apt-get install -y apt-transport-https ca-certificates curl gnupg containerd
+
+containerd config default > /etc/containerd/config.toml
+sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+systemctl restart containerd
+systemctl enable containerd
+
+echo "=== Installing Kubernetes packages ==="
+curl -fsSL https://pkgs.k8s.io/core:/stable:/v1.30/deb/Release.key | \
+  gpg --dearmor -o /etc/apt/keyrings/kubernetes-apt-keyring.gpg
+
+echo 'deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.gpg] https://pkgs.k8s.io/core:/stable:/v1.30/deb/ /' \
+  > /etc/apt/sources.list.d/kubernetes.list
+
+apt-get update -y
+apt-get install -y kubelet kubeadm kubectl
+apt-mark hold kubelet kubeadm kubectl
+systemctl enable kubelet
+
+echo "=== Bootstrap complete ==="
+touch /tmp/bootstrap-done
+EOF
+  )
 }
 
 # ── VPC ──────────────────────────────────────────────
@@ -149,7 +171,7 @@ resource "aws_instance" "master" {
   subnet_id              = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.k8s.id]
   key_name               = var.key_name
-  user_data              = local.bootstrap_script
+  user_data_base64       = local.bootstrap_script
 
   tags = {
     Name    = "K8s-Master"
@@ -165,7 +187,7 @@ resource "aws_instance" "worker" {
   subnet_id              = aws_subnet.public.id
   vpc_security_group_ids = [aws_security_group.k8s.id]
   key_name               = var.key_name
-  user_data              = local.bootstrap_script
+  user_data_base64       = local.bootstrap_script
 
   tags = {
     Name    = "K8s-Worker-${count.index + 1}"
