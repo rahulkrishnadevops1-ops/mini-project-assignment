@@ -87,7 +87,12 @@ echo "=== Running Ansible ==="
 ansible-playbook -i /tmp/inventory.ini ansible/site.yml -v 2>&1 | tee ansible-output.log
 ANSIBLE_EXIT=${PIPESTATUS[0]}
 echo "=== Ansible Exit Code: ${ANSIBLE_EXIT} ==="
-exit ${ANSIBLE_EXIT}
+# Exit code 0 = success no changes, 2 = success with changes — both are OK
+if [ ${ANSIBLE_EXIT} -ne 0 ] && [ ${ANSIBLE_EXIT} -ne 2 ]; then
+    echo "Ansible FAILED with exit code ${ANSIBLE_EXIT}"
+    exit ${ANSIBLE_EXIT}
+fi
+echo "Ansible completed successfully ✅"
                 '''
             }
         }
