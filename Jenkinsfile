@@ -44,43 +44,53 @@ pipeline {
             }
         }
 
-        stage('Ansible - Setup K8s Cluster') {
-            steps {
-                sh '''
-                    MASTER_IP=$(cat /tmp/master_ip.txt)
-                    WORKER1=$(sed -n '1p' /tmp/worker_ips.txt)
-                    WORKER2=$(sed -n '2p' /tmp/worker_ips.txt)
-
-                    cat > /tmp/inventory.ini << EOF
-[master]
-${MASTER_IP} ansible_user=ubuntu ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
-
-[workers]
-${WORKER1} ansible_user=ubuntu ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
-${WORKER2} ansible_user=ubuntu ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
-
-[k8s:children]
-master
-workers
-EOF
-
-                    echo "Waiting 60s for EC2s to initialize..."
-                    sleep 60
-
-                    echo "Waiting for SSH on master..."
-                    until ssh -i /var/lib/jenkins/.ssh/id_rsa \
-                        -o StrictHostKeyChecking=no \
-                        -o ConnectTimeout=5 \
-                        ubuntu@${MASTER_IP} echo "SSH ready" 2>/dev/null; do
-                        echo "Not ready yet, retrying in 10s..."
-                        sleep 10
-                    done
-
-                    echo "SSH is up! Running Ansible..."
-                    ansible-playbook -i /tmp/inventory.ini ansible/site.yml
-                '''
-            }
-        }
+                        stage('Ansible - Setup K8s Cluster') {
+                    steps {
+                        sh '''
+                            MASTER_IP=$(cat /tmp/master_ip.txt)
+                            WORKER1=$(sed -n '1p' /tmp/worker_ips.txt)
+                            WORKER2=$(sed -n '2p' /tmp/worker_ips.txt)
+                
+                            cat > /tmp/inventory.ini << EOF
+                [master]
+                ${MASTER_IP} ansible_user=ubuntu ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+                
+                [workers]
+                ${WORKER1} ansible_user=ubuntu ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+                ${WORKER2} ansible_user=ubuntu ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+                
+                [k8s:children]
+                master
+                workers
+                EOF
+                
+                            echo "=== Waiting 90s for EC2s to fully initialize ==="
+                            sleep 90
+                
+                            echo "=== Waiting for SSH on all nodes ==="
+                            for IP in ${MASTER_IP} ${WORKER1} ${WORKER2}; do
+                                echo "Checking SSH on ${IP}..."
+                                RETRIES=0
+                                until ssh -i /var/lib/jenkins/.ssh/id_rsa \
+                                    -o StrictHostKeyChecking=no \
+                                    -o ConnectTimeout=10 \
+                                    ubuntu@${IP} echo "SSH OK" 2>/dev/null; do
+                                    RETRIES=$((RETRIES+1))
+                                    if [ $RETRIES -ge 20 ]; then
+                                        echo "ERROR: SSH failed after 20 retries on ${IP}"
+                                        exit 1
+                                    fi
+                                    echo "Retry ${RETRIES}/20 for ${IP}..."
+                                    sleep 15
+                                done
+                                echo "SSH ready on ${IP} ✅"
+                            done
+                
+                            echo "=== Running Ansible ==="
+                            ansible-playbook -i /tmp/inventory.ini ansible/site.yml -v
+                        '''
+                    }
+                }
 
         stage('Copy Kubeconfig') {
             steps {
