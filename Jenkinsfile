@@ -44,55 +44,54 @@ pipeline {
             }
         }
 
-                        stage('Ansible - Setup K8s Cluster') {
-                    steps {
-                        sh '''
-                            MASTER_IP=$(cat /tmp/master_ip.txt)
-                            WORKER1=$(sed -n '1p' /tmp/worker_ips.txt)
-                            WORKER2=$(sed -n '2p' /tmp/worker_ips.txt)
-                
-                            cat > /tmp/inventory.ini << EOF
-                [master]
-                ${MASTER_IP} ansible_user=ubuntu ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
-                
-                [workers]
-                ${WORKER1} ansible_user=ubuntu ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
-                ${WORKER2} ansible_user=ubuntu ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
-                
-                [k8s:children]
-                master
-                workers
-                EOF
-                
-                            echo "=== Waiting 90s for EC2s to fully initialize ==="
-                            sleep 90
-                
-                            echo "=== Waiting for SSH on all nodes ==="
-                            for IP in ${MASTER_IP} ${WORKER1} ${WORKER2}; do
-                                echo "Checking SSH on ${IP}..."
-                                RETRIES=0
-                                until ssh -i /var/lib/jenkins/.ssh/id_rsa \
-                                    -o StrictHostKeyChecking=no \
-                                    -o ConnectTimeout=10 \
-                                    ubuntu@${IP} echo "SSH OK" 2>/dev/null; do
-                                    RETRIES=$((RETRIES+1))
-                                    if [ $RETRIES -ge 20 ]; then
-                                        echo "ERROR: SSH failed after 20 retries on ${IP}"
-                                        exit 1
-                                    fi
-                                    echo "Retry ${RETRIES}/20 for ${IP}..."
-                                    sleep 15
-                                done
-                                echo "SSH ready on ${IP} ✅"
-                            done
-                
-                            echo "=== Running Ansible ==="
-                            ansible-playbook -i /tmp/inventory.ini ansible/site.yml -v 2>&1 | tee /tmp/ansible-output.log
-                            echo "=== Ansible Exit Code: $? ==="
-                            cat /tmp/ansible-output.log | tail -50
-                        '''
-                    }
-                }
+                       stage('Ansible - Setup K8s Cluster') {
+                                    steps {
+                                        sh '''
+                                            MASTER_IP=$(cat /tmp/master_ip.txt)
+                                            WORKER1=$(sed -n '1p' /tmp/worker_ips.txt)
+                                            WORKER2=$(sed -n '2p' /tmp/worker_ips.txt)
+                                
+                                            cat > /tmp/inventory.ini << EOF
+                                [master]
+                                ${MASTER_IP} ansible_user=ubuntu ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+                                
+                                [workers]
+                                ${WORKER1} ansible_user=ubuntu ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+                                ${WORKER2} ansible_user=ubuntu ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+                                
+                                [k8s:children]
+                                master
+                                workers
+                                EOF
+                                
+                                            echo "=== Waiting 120s for EC2s to initialize ==="
+                                            sleep 120
+                                
+                                            echo "=== Waiting for SSH on master ${MASTER_IP} ==="
+                                            RETRIES=0
+                                            until ssh -i /var/lib/jenkins/.ssh/id_rsa \
+                                                -o StrictHostKeyChecking=no \
+                                                -o ConnectTimeout=10 \
+                                                ubuntu@${MASTER_IP} echo "SSH OK" 2>/dev/null; do
+                                                RETRIES=$((RETRIES+1))
+                                                echo "Retry ${RETRIES}/30 for master..."
+                                                if [ $RETRIES -ge 30 ]; then
+                                                    echo "ERROR: SSH timeout on master after 30 retries"
+                                                    exit 1
+                                                fi
+                                                sleep 20
+                                            done
+                                            echo "Master SSH ready ✅"
+                                
+                                            echo "=== Running Ansible ==="
+                                            ansible-playbook -i /tmp/inventory.ini ansible/site.yml -v \
+                                                2>&1 | tee ansible-output.log
+                                            ANSIBLE_EXIT=${PIPESTATUS[0]}
+                                            echo "Ansible exit code: ${ANSIBLE_EXIT}"
+                                            exit ${ANSIBLE_EXIT}
+                                        '''
+                                    }
+                                }
 
         stage('Copy Kubeconfig') {
             steps {
