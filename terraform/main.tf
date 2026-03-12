@@ -138,6 +138,36 @@ resource "aws_instance" "worker" {
     Cluster = "kubecoin"
   }
 }
+resource "aws_instance" "master" {
+  ami                    = data.aws_ami.ubuntu.id
+  instance_type          = var.master_instance_type
+  subnet_id              = aws_subnet.public.id
+  vpc_security_group_ids = [aws_security_group.k8s.id]
+  key_name               = var.key_name
+  user_data              = local.bootstrap_script   # ← ADD THIS
+
+  tags = {
+    Name    = "K8s-Master"
+    Role    = "master"
+    Cluster = "kubecoin"
+  }
+}
+
+resource "aws_instance" "worker" {
+  count                  = 2
+  ami                    = data.aws_ami.ubuntu.id
+  instance_type          = var.worker_instance_type
+  subnet_id              = aws_subnet.public.id
+  vpc_security_group_ids = [aws_security_group.k8s.id]
+  key_name               = var.key_name
+  user_data              = local.bootstrap_script   # ← ADD THIS
+
+  tags = {
+    Name    = "K8s-Worker-${count.index + 1}"
+    Role    = "workers"
+    Cluster = "kubecoin"
+  }
+}
 locals {
   bootstrap_script = <<-EOF
     #!/bin/bash
