@@ -188,20 +188,21 @@ EOF
         failure {
             echo '❌ Pipeline failed! Running terraform destroy to clean up...'
             withCredentials([
-                string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
-                string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
-            ]) {
-                sh '''
-                    export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-                    export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
-                    export AWS_DEFAULT_REGION=ap-south-1
-
-                    cd terraform
-                    terraform destroy -auto-approve || true
-                    echo "🧹 Infrastructure destroyed!"
-                '''
-            }
+            string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
+            string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
+        ]) {
+            sh '''
+                export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+                export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+                export AWS_DEFAULT_REGION=ap-south-1
+    
+                cd terraform
+                terraform init -reconfigure || true
+                terraform destroy -auto-approve || true
+                echo "🧹 Infrastructure destroyed!"
+            '''
         }
+    }
         always {
             sh 'docker logout || true'
         }
