@@ -87,7 +87,9 @@ pipeline {
                             done
                 
                             echo "=== Running Ansible ==="
-                            ansible-playbook -i /tmp/inventory.ini ansible/site.yml -v
+                            ansible-playbook -i /tmp/inventory.ini ansible/site.yml -v 2>&1 | tee /tmp/ansible-output.log
+                            echo "=== Ansible Exit Code: $? ==="
+                            cat /tmp/ansible-output.log | tail -50
                         '''
                     }
                 }
