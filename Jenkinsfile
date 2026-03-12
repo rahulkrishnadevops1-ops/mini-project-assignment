@@ -44,69 +44,53 @@ pipeline {
             }
         }
 
-                       stage('Ansible - Setup K8s Cluster') {
-                                    steps {
-                                        sh '''
-                                            MASTER_IP=$(cat /tmp/master_ip.txt)
-                                            WORKER1=$(sed -n '1p' /tmp/worker_ips.txt)
-                                            WORKER2=$(sed -n '2p' /tmp/worker_ips.txt)
-                                
-                                            cat > /tmp/inventory.ini << EOF
-                                [master]
-                                ${MASTER_IP} ansible_user=ubuntu ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
-                                
-                                [workers]
-                                ${WORKER1} ansible_user=ubuntu ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
-                                ${WORKER2} ansible_user=ubuntu ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
-                                
-                                [k8s:children]
-                                master
-                                workers
-                                EOF
-                                
-                                            echo "=== Waiting 120s for EC2s to initialize ==="
-                                            sleep 120
-                                
-                                            echo "=== Waiting for SSH on master ${MASTER_IP} ==="
-                                            RETRIES=0
-                                            until ssh -i /var/lib/jenkins/.ssh/id_rsa \
-                                                -o StrictHostKeyChecking=no \
-                                                -o ConnectTimeout=10 \
-                                                ubuntu@${MASTER_IP} echo "SSH OK" 2>/dev/null; do
-                                                RETRIES=$((RETRIES+1))
-                                                echo "Retry ${RETRIES}/30 for master..."
-                                                if [ $RETRIES -ge 30 ]; then
-                                                    echo "ERROR: SSH timeout on master after 30 retries"
-                                                    exit 1
-                                                fi
-                                                sleep 20
-                                            done
-                                            echo "Master SSH ready ✅"
-                                
-                                            echo "=== Running Ansible ==="
-                                            ansible-playbook -i /tmp/inventory.ini ansible/site.yml -v \
-                                                2>&1 | tee ansible-output.log
-                                            ANSIBLE_EXIT=${PIPESTATUS[0]}
-                                            echo "Ansible exit code: ${ANSIBLE_EXIT}"
-                                            exit ${ANSIBLE_EXIT}
-                                            echo "=== Waiting for SSH on master ${MASTER_IP} ==="
-                                            RETRIES=0
-                                            until ssh -i /var/lib/jenkins/.ssh/id_rsa \
-                                                -o StrictHostKeyChecking=no \
-                                                -o ConnectTimeout=10 \
-                                                ubuntu@${MASTER_IP} "test -f /tmp/bootstrap-done && echo ready" 2>/dev/null | grep -q ready; do
-                                                RETRIES=$((RETRIES+1))
-                                                echo "Retry ${RETRIES}/30 - waiting for bootstrap..."
-                                                if [ $RETRIES -ge 30 ]; then
-                                                    echo "ERROR: Bootstrap timeout"
-                                                    exit 1
-                                                fi
-                                                sleep 20
-                                            done
-                                            echo "Master bootstrap complete ✅"
-                                        '''
-                                    }
-                                }
+        stage('Ansible - Setup K8s Cluster') {
+            steps {
+                sh '''
+MASTER_IP=$(cat /tmp/master_ip.txt)
+WORKER1=$(sed -n '1p' /tmp/worker_ips.txt)
+WORKER2=$(sed -n '2p' /tmp/worker_ips.txt)
+
+cat > /tmp/inventory.ini << EOF
+[master]
+${MASTER_IP} ansible_user=ubuntu ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+
+[workers]
+${WORKER1} ansible_user=ubuntu ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+${WORKER2} ansible_user=ubuntu ansible_ssh_private_key_file=/var/lib/jenkins/.ssh/id_rsa ansible_ssh_common_args='-o StrictHostKeyChecking=no'
+
+[k8s:children]
+master
+workers
+EOF
+
+echo "=== Generated inventory ==="
+cat /tmp/inventory.ini
+
+echo "=== Waiting for bootstrap-done on master ==="
+RETRIES=0
+until ssh -i /var/lib/jenkins/.ssh/id_rsa \
+    -o StrictHostKeyChecking=no \
+    -o ConnectTimeout=10 \
+    ubuntu@${MASTER_IP} "test -f /tmp/bootstrap-done && echo ready" 2>/dev/null | grep -q ready; do
+    RETRIES=$((RETRIES+1))
+    echo "Retry ${RETRIES}/30 - waiting for bootstrap..."
+    if [ $RETRIES -ge 30 ]; then
+        echo "ERROR: Bootstrap timeout after 30 retries"
+        exit 1
+    fi
+    sleep 20
+done
+echo "Bootstrap complete on master ✅"
+
+echo "=== Running Ansible ==="
+ansible-playbook -i /tmp/inventory.ini ansible/site.yml -v 2>&1 | tee ansible-output.log
+ANSIBLE_EXIT=${PIPESTATUS[0]}
+echo "=== Ansible Exit Code: ${ANSIBLE_EXIT} ==="
+exit ${ANSIBLE_EXIT}
+                '''
+            }
+        }
 
         stage('Copy Kubeconfig') {
             steps {
@@ -214,21 +198,21 @@ pipeline {
         failure {
             echo '❌ Pipeline failed! Running terraform destroy to clean up...'
             withCredentials([
-            string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
-            string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
-        ]) {
-            sh '''
-                export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-                export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
-                export AWS_DEFAULT_REGION=ap-south-1
-    
-                cd terraform
-                terraform init -reconfigure || true
-                terraform destroy -auto-approve || true
-                echo "🧹 Infrastructure destroyed!"
-            '''
+                string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
+                string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
+            ]) {
+                sh '''
+                    export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+                    export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+                    export AWS_DEFAULT_REGION=ap-south-1
+
+                    cd terraform
+                    terraform init -reconfigure || true
+                    terraform destroy -auto-approve || true
+                    echo "🧹 Infrastructure destroyed!"
+                '''
+            }
         }
-    }
         always {
             sh 'docker logout || true'
         }
