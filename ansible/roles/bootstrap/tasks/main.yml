@@ -110,3 +110,14 @@
     name: kubelet
     enabled: true
     state: started
+    
+- name: Wait for bootstrap to complete
+  wait_for:
+    path: /tmp/bootstrap-done
+    timeout: 300
+
+- name: Verify kubelet is running
+  systemd:
+    name: kubelet
+    state: started
+    enabled: true
