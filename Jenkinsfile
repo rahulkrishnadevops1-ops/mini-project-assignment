@@ -89,6 +89,21 @@ pipeline {
                                             ANSIBLE_EXIT=${PIPESTATUS[0]}
                                             echo "Ansible exit code: ${ANSIBLE_EXIT}"
                                             exit ${ANSIBLE_EXIT}
+                                            echo "=== Waiting for SSH on master ${MASTER_IP} ==="
+                                            RETRIES=0
+                                            until ssh -i /var/lib/jenkins/.ssh/id_rsa \
+                                                -o StrictHostKeyChecking=no \
+                                                -o ConnectTimeout=10 \
+                                                ubuntu@${MASTER_IP} "test -f /tmp/bootstrap-done && echo ready" 2>/dev/null | grep -q ready; do
+                                                RETRIES=$((RETRIES+1))
+                                                echo "Retry ${RETRIES}/30 - waiting for bootstrap..."
+                                                if [ $RETRIES -ge 30 ]; then
+                                                    echo "ERROR: Bootstrap timeout"
+                                                    exit 1
+                                                fi
+                                                sleep 20
+                                            done
+                                            echo "Master bootstrap complete ✅"
                                         '''
                                     }
                                 }
