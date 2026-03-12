@@ -60,36 +60,6 @@ resource "aws_route_table_association" "public" {
 }
 
 # ── Security Groups ───────────────────────────────────
-resource "aws_security_group" "jenkins" {
-  name        = "jenkins-sg"
-  description = "Jenkins server access"
-  vpc_id      = aws_vpc.main.id
-
-  ingress {
-    description = "SSH"
-    from_port   = 22
-    to_port     = 22
-    protocol    = "tcp"
-    cidr_blocks = ["${var.my_ip}/32"]
-  }
-
-  ingress {
-    description = "Jenkins UI"
-    from_port   = 8080
-    to_port     = 8080
-    protocol    = "tcp"
-    cidr_blocks = ["${var.my_ip}/32"]
-  }
-
-  egress {
-    from_port   = 0
-    to_port     = 0
-    protocol    = "-1"
-    cidr_blocks = ["0.0.0.0/0"]
-  }
-
-  tags = { Name = "jenkins-sg" }
-}
 
 resource "aws_security_group" "k8s" {
   name        = "k8s-nodes-sg"
@@ -110,14 +80,6 @@ ingress {
     to_port     = 0
     protocol    = "-1"
     self        = true
-  }
-
-  ingress {
-    description     = "K8s API from Jenkins"
-    from_port       = 6443
-    to_port         = 6443
-    protocol        = "tcp"
-    security_groups = [aws_security_group.jenkins.id]
   }
 
   ingress {
@@ -147,18 +109,6 @@ ingress {
 }
 
 # ── EC2 Instances ─────────────────────────────────────
-resource "aws_instance" "jenkins" {
-  ami                    = data.aws_ami.ubuntu.id
-  instance_type          = var.jenkins_instance_type
-  subnet_id              = aws_subnet.public.id
-  vpc_security_group_ids = [aws_security_group.jenkins.id]
-  key_name               = var.key_name
-
-  tags = {
-    Name = "Jenkins-Server"
-    Role = "Jenkins"
-  }
-}
 
 resource "aws_instance" "master" {
   ami                    = data.aws_ami.ubuntu.id
