@@ -2,7 +2,7 @@ pipeline {
     agent any
 
     environment {
-        DOCKERHUB_USER  = 'rahulkrishnadevops1ops'
+        DOCKERHUB_USER  = 'rahulkrishnadevops'
         FRONTEND_IMAGE  = "${DOCKERHUB_USER}/kubecoin-frontend"
         BACKEND_IMAGE   = "${DOCKERHUB_USER}/kubecoin-backend"
         IMAGE_TAG       = "${BUILD_NUMBER}"
