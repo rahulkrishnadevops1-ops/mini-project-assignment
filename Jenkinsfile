@@ -1,6 +1,14 @@
 pipeline {
     agent any
 
+    parameters {
+        choice(
+            name: 'ACTION',
+            choices: ['BUILD', 'DESTROY'],
+            description: 'Select BUILD to deploy kubecoin, or DESTROY to tear down all infrastructure'
+        )
+    }
+    
     environment {
         DOCKERHUB_USER  = 'rahulkrishnadevops'
         FRONTEND_IMAGE  = "${DOCKERHUB_USER}/kubecoin-frontend"
