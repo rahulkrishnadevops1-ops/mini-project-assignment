@@ -46,7 +46,7 @@ pipeline {
 
         stage('Ansible - Setup K8s Cluster') {
             steps {
-                sh '''
+                sh '''#!/bin/bash
 MASTER_IP=$(cat /tmp/master_ip.txt)
 WORKER1=$(sed -n '1p' /tmp/worker_ips.txt)
 WORKER2=$(sed -n '2p' /tmp/worker_ips.txt)
@@ -84,10 +84,13 @@ done
 echo "Bootstrap complete on master ✅"
 
 echo "=== Running Ansible ==="
-ansible-playbook -i /tmp/inventory.ini ansible/site.yml -v 2>&1 | tee ansible-output.log
-ANSIBLE_EXIT=${PIPESTATUS[0]}
+set +e
+ansible-playbook -i /tmp/inventory.ini ansible/site.yml -v > ansible-output.log 2>&1
+ANSIBLE_EXIT=$?
+set -e
+cat ansible-output.log
 echo "=== Ansible Exit Code: ${ANSIBLE_EXIT} ==="
-# Exit code 0 = success no changes, 2 = success with changes — both are OK
+# Ansible: 0 = success, 2 = success with changes (both OK)
 if [ ${ANSIBLE_EXIT} -ne 0 ] && [ ${ANSIBLE_EXIT} -ne 2 ]; then
     echo "Ansible FAILED with exit code ${ANSIBLE_EXIT}"
     exit ${ANSIBLE_EXIT}
