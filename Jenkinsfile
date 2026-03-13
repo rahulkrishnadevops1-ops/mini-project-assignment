@@ -29,7 +29,7 @@ pipeline {
 
         stage('Destroy Infrastructure') {
             when {
-                expression { params.DESTROY == true }
+                expression { return params.DESTROY }
             }
             steps {
                 withCredentials([
@@ -51,7 +51,7 @@ pipeline {
 
         stage('Terraform - Provision Infra') {
             when {
-                expression { params.DESTROY == false }
+                expression { return !params.DESTROY }
             }
             steps {
                 withCredentials([
@@ -79,7 +79,7 @@ pipeline {
 
         stage('Ansible - Setup K8s Cluster') {
             when {
-                expression { params.DESTROY == false }
+                expression { return !params.DESTROY }
             }
             steps {
                 sh '''#!/bin/bash
@@ -137,25 +137,19 @@ echo "Ansible completed successfully ✅"
 
         stage('Copy Kubeconfig') {
             when {
-                expression { params.DESTROY == false }
+                expression { return !params.DESTROY }
             }
             steps {
                 sh '''#!/bin/bash
                     MASTER_IP=$(cat /tmp/master_ip.txt)
-
                     sleep 30
-
                     ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ubuntu@${MASTER_IP} \
                         "cat ~/.kube/config" > /tmp/kubeconfig
-
                     sed -i "s|server: https://.*:6443|server: https://${MASTER_IP}:6443|g" /tmp/kubeconfig
-
                     echo "=== Kubeconfig server line ==="
                     grep "server:" /tmp/kubeconfig
-
                     mkdir -p /var/lib/jenkins/.kube
                     cp /tmp/kubeconfig /var/lib/jenkins/.kube/config
-
                     kubectl --kubeconfig=/tmp/kubeconfig get nodes
                 '''
             }
@@ -163,7 +157,7 @@ echo "Ansible completed successfully ✅"
 
         stage('Docker Login') {
             when {
-                expression { params.DESTROY == false }
+                expression { return !params.DESTROY }
             }
             steps {
                 withCredentials([usernamePassword(
@@ -178,9 +172,9 @@ echo "Ansible completed successfully ✅"
 
         stage('Build & Push Images') {
             when {
-                expression { params.DESTROY == false }
+                expression { return !params.DESTROY }
             }
-            parallel {
+            stages {
                 stage('Frontend') {
                     steps {
                         sh """
@@ -206,7 +200,7 @@ echo "Ansible completed successfully ✅"
 
         stage('Helm Deploy') {
             when {
-                expression { params.DESTROY == false }
+                expression { return !params.DESTROY }
             }
             steps {
                 sh """#!/bin/bash
@@ -231,7 +225,7 @@ echo "Ansible completed successfully ✅"
 
         stage('Verify') {
             when {
-                expression { params.DESTROY == false }
+                expression { return !params.DESTROY }
             }
             steps {
                 sh """
@@ -262,7 +256,7 @@ echo "Ansible completed successfully ✅"
         failure {
             script {
                 if (!params.DESTROY) {
-                    echo '❌ Pipeline failed! Running terraform destroy to clean up...'
+                    echo '❌ Build failed! Cleaning up infrastructure...'
                     withCredentials([
                         string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
                         string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
