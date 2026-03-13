@@ -105,19 +105,16 @@ echo "Ansible completed successfully ✅"
                 sh '''#!/bin/bash
                     MASTER_IP=$(cat /tmp/master_ip.txt)
 
-                    sleep 20
+                    sleep 30
 
                     ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ubuntu@${MASTER_IP} \
                         "cat ~/.kube/config" > /tmp/kubeconfig
 
-                    # Get the private IP used by kubeadm
-                    PRIVATE_IP=$(ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ubuntu@${MASTER_IP} \
-                        "hostname -I | awk '{print \$1}'")
+                    # Replace any API server address (private IP/localhost) with public IP
+                    sed -i "s|server: https://.*:6443|server: https://${MASTER_IP}:6443|g" /tmp/kubeconfig
 
-                    # Replace all possible API server addresses with the public IP
-                    sed -i "s|https://127.0.0.1:6443|https://${MASTER_IP}:6443|g" /tmp/kubeconfig
-                    sed -i "s|https://localhost:6443|https://${MASTER_IP}:6443|g" /tmp/kubeconfig
-                    sed -i "s|https://${PRIVATE_IP}:6443|https://${MASTER_IP}:6443|g" /tmp/kubeconfig
+                    echo "=== Kubeconfig server line ==="
+                    grep "server:" /tmp/kubeconfig
 
                     mkdir -p /var/lib/jenkins/.kube
                     cp /tmp/kubeconfig /var/lib/jenkins/.kube/config
