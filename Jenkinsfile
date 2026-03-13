@@ -2,17 +2,17 @@ pipeline {
     agent any
 
     parameters {
-        choice(
-            name: 'ACTION',
-            choices: ['BUILD', 'DESTROY'],
-            description: 'Select BUILD to deploy kubecoin, or DESTROY to tear down all infrastructure'
+        booleanParam(
+            name: 'DESTROY',
+            defaultValue: false,
+            description: 'Destroy infrastructure instead of apply'
         )
     }
-    
+
     environment {
         DOCKERHUB_USER  = 'rahulkrishnadevops'
-        FRONTEND_IMAGE  = "${DOCKERHUB_USER}/kubecoin-frontend"
-        BACKEND_IMAGE   = "${DOCKERHUB_USER}/kubecoin-backend"
+        FRONTEND_IMAGE  = 'rahulkrishnadevops/kubecoin-frontend'
+        BACKEND_IMAGE   = 'rahulkrishnadevops/kubecoin-backend'
         IMAGE_TAG       = "${BUILD_NUMBER}"
         SSH_KEY         = '/var/lib/jenkins/.ssh/id_rsa'
     }
@@ -27,7 +27,32 @@ pipeline {
             }
         }
 
+        stage('Destroy Infrastructure') {
+            when {
+                expression { params.DESTROY == true }
+            }
+            steps {
+                withCredentials([
+                    string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
+                    string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
+                ]) {
+                    sh '''
+                        export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+                        export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+                        export AWS_DEFAULT_REGION=ap-south-1
+                        cd terraform
+                        terraform init -reconfigure
+                        terraform destroy -auto-approve
+                        echo "🧹 Infrastructure destroyed!"
+                    '''
+                }
+            }
+        }
+
         stage('Terraform - Provision Infra') {
+            when {
+                expression { params.DESTROY == false }
+            }
             steps {
                 withCredentials([
                     string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
@@ -53,6 +78,9 @@ pipeline {
         }
 
         stage('Ansible - Setup K8s Cluster') {
+            when {
+                expression { params.DESTROY == false }
+            }
             steps {
                 sh '''#!/bin/bash
 MASTER_IP=$(cat /tmp/master_ip.txt)
@@ -98,7 +126,6 @@ ANSIBLE_EXIT=$?
 set -e
 cat ansible-output.log
 echo "=== Ansible Exit Code: ${ANSIBLE_EXIT} ==="
-# Ansible: 0 = success. Allow exit code 2 to pass as well for safety.
 if [ ${ANSIBLE_EXIT} -ne 0 ] && [ ${ANSIBLE_EXIT} -ne 2 ]; then
     echo "Ansible FAILED with exit code ${ANSIBLE_EXIT}"
     exit ${ANSIBLE_EXIT}
@@ -109,6 +136,9 @@ echo "Ansible completed successfully ✅"
         }
 
         stage('Copy Kubeconfig') {
+            when {
+                expression { params.DESTROY == false }
+            }
             steps {
                 sh '''#!/bin/bash
                     MASTER_IP=$(cat /tmp/master_ip.txt)
@@ -118,7 +148,6 @@ echo "Ansible completed successfully ✅"
                     ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ubuntu@${MASTER_IP} \
                         "cat ~/.kube/config" > /tmp/kubeconfig
 
-                    # Replace any API server address (private IP/localhost) with public IP
                     sed -i "s|server: https://.*:6443|server: https://${MASTER_IP}:6443|g" /tmp/kubeconfig
 
                     echo "=== Kubeconfig server line ==="
@@ -133,6 +162,9 @@ echo "Ansible completed successfully ✅"
         }
 
         stage('Docker Login') {
+            when {
+                expression { params.DESTROY == false }
+            }
             steps {
                 withCredentials([usernamePassword(
                     credentialsId: 'dockerhub-creds',
@@ -145,6 +177,9 @@ echo "Ansible completed successfully ✅"
         }
 
         stage('Build & Push Images') {
+            when {
+                expression { params.DESTROY == false }
+            }
             parallel {
                 stage('Frontend') {
                     steps {
@@ -170,6 +205,9 @@ echo "Ansible completed successfully ✅"
         }
 
         stage('Helm Deploy') {
+            when {
+                expression { params.DESTROY == false }
+            }
             steps {
                 sh """#!/bin/bash
                     MASTER_IP=\$(cat /tmp/master_ip.txt)
@@ -192,6 +230,9 @@ echo "Ansible completed successfully ✅"
         }
 
         stage('Verify') {
+            when {
+                expression { params.DESTROY == false }
+            }
             steps {
                 sh """
                     MASTER_IP=\$(cat /tmp/master_ip.txt)
@@ -210,24 +251,33 @@ echo "Ansible completed successfully ✅"
 
     post {
         success {
-            echo '✅ KubeCoin deployed successfully!'
+            script {
+                if (params.DESTROY) {
+                    echo '🧹 Infrastructure destroyed successfully!'
+                } else {
+                    echo '✅ KubeCoin deployed successfully!'
+                }
+            }
         }
         failure {
-            echo '❌ Pipeline failed! Running terraform destroy to clean up...'
-            withCredentials([
-                string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
-                string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
-            ]) {
-                sh '''
-                    export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
-                    export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
-                    export AWS_DEFAULT_REGION=ap-south-1
-
-                    cd terraform
-                    terraform init -reconfigure || true
-                    terraform destroy -auto-approve || true
-                    echo "🧹 Infrastructure destroyed!"
-                '''
+            script {
+                if (!params.DESTROY) {
+                    echo '❌ Pipeline failed! Running terraform destroy to clean up...'
+                    withCredentials([
+                        string(credentialsId: 'aws-access-key', variable: 'AWS_ACCESS_KEY_ID'),
+                        string(credentialsId: 'aws-secret-key', variable: 'AWS_SECRET_ACCESS_KEY')
+                    ]) {
+                        sh '''
+                            export AWS_ACCESS_KEY_ID=$AWS_ACCESS_KEY_ID
+                            export AWS_SECRET_ACCESS_KEY=$AWS_SECRET_ACCESS_KEY
+                            export AWS_DEFAULT_REGION=ap-south-1
+                            cd terraform
+                            terraform init -reconfigure || true
+                            terraform destroy -auto-approve || true
+                            echo "🧹 Infrastructure destroyed!"
+                        '''
+                    }
+                }
             }
         }
         always {
