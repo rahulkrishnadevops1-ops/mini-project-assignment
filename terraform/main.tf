@@ -65,6 +65,9 @@ apt-get install -y kubelet kubeadm kubectl
 apt-mark hold kubelet kubeadm kubectl
 systemctl enable kubelet
 
+echo "=== Installing Helm ==="
+curl -fsSL https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
 echo "=== Bootstrap complete ==="
 touch /tmp/bootstrap-done
 EOF

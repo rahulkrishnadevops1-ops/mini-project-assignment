@@ -90,7 +90,7 @@ ANSIBLE_EXIT=$?
 set -e
 cat ansible-output.log
 echo "=== Ansible Exit Code: ${ANSIBLE_EXIT} ==="
-# Ansible: 0 = success, 2 = success with changes (both OK)
+# Ansible: 0 = success. Allow exit code 2 to pass as well for safety.
 if [ ${ANSIBLE_EXIT} -ne 0 ] && [ ${ANSIBLE_EXIT} -ne 2 ]; then
     echo "Ansible FAILED with exit code ${ANSIBLE_EXIT}"
     exit ${ANSIBLE_EXIT}
@@ -102,7 +102,7 @@ echo "Ansible completed successfully ✅"
 
         stage('Copy Kubeconfig') {
             steps {
-                sh '''
+                sh '''#!/bin/bash
                     MASTER_IP=$(cat /tmp/master_ip.txt)
 
                     sleep 20
@@ -110,8 +110,14 @@ echo "Ansible completed successfully ✅"
                     ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ubuntu@${MASTER_IP} \
                         "cat ~/.kube/config" > /tmp/kubeconfig
 
+                    # Get the private IP used by kubeadm
+                    PRIVATE_IP=$(ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ubuntu@${MASTER_IP} \
+                        "hostname -I | awk '{print \$1}'")
+
+                    # Replace all possible API server addresses with the public IP
                     sed -i "s|https://127.0.0.1:6443|https://${MASTER_IP}:6443|g" /tmp/kubeconfig
                     sed -i "s|https://localhost:6443|https://${MASTER_IP}:6443|g" /tmp/kubeconfig
+                    sed -i "s|https://${PRIVATE_IP}:6443|https://${MASTER_IP}:6443|g" /tmp/kubeconfig
 
                     mkdir -p /var/lib/jenkins/.kube
                     cp /tmp/kubeconfig /var/lib/jenkins/.kube/config
@@ -160,24 +166,22 @@ echo "Ansible completed successfully ✅"
 
         stage('Helm Deploy') {
             steps {
-                sh """
+                sh """#!/bin/bash
                     MASTER_IP=\$(cat /tmp/master_ip.txt)
 
-                    scp -i ${SSH_KEY} -o StrictHostKeyChecking=no \
+                    scp -i ${SSH_KEY} -o StrictHostKeyChecking=no \\
                         -r helm/kubecoin ubuntu@\${MASTER_IP}:/tmp/kubecoin-helm
 
-                    ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ubuntu@\${MASTER_IP} '
-                        kubectl create namespace frontend --dry-run=client -o yaml | kubectl apply -f -
-                        kubectl create namespace backend  --dry-run=client -o yaml | kubectl apply -f -
-                        kubectl create namespace data     --dry-run=client -o yaml | kubectl apply -f -
-
-                        helm upgrade --install kubecoin /tmp/kubecoin-helm \
-                            --set backend.image.repository=${BACKEND_IMAGE} \
-                            --set backend.image.tag=${IMAGE_TAG} \
-                            --set frontend.image.repository=${FRONTEND_IMAGE} \
-                            --set frontend.image.tag=${IMAGE_TAG} \
-                            --wait --timeout 5m
-                    '
+                    ssh -i ${SSH_KEY} -o StrictHostKeyChecking=no ubuntu@\${MASTER_IP} \\
+                        "kubectl create namespace frontend --dry-run=client -o yaml | kubectl apply -f - && \\
+                         kubectl create namespace backend  --dry-run=client -o yaml | kubectl apply -f - && \\
+                         kubectl create namespace data     --dry-run=client -o yaml | kubectl apply -f - && \\
+                         helm upgrade --install kubecoin /tmp/kubecoin-helm \\
+                             --set backend.image.repository=${BACKEND_IMAGE} \\
+                             --set backend.image.tag=${IMAGE_TAG} \\
+                             --set frontend.image.repository=${FRONTEND_IMAGE} \\
+                             --set frontend.image.tag=${IMAGE_TAG} \\
+                             --wait --timeout 5m"
                 """
             }
         }
